@@ -4,7 +4,6 @@ from src.utils import *
 from torch.utils.data import DataLoader
 from src import train
 
-
 parser = argparse.ArgumentParser(description='MOSEI Sentiment Analysis')
 parser.add_argument('-f', default='', type=str)
 
@@ -119,7 +118,14 @@ print("Start loading the data....")
 train_data = get_data(args, dataset, 'train')
 valid_data = get_data(args, dataset, 'valid')
 test_data = get_data(args, dataset, 'test')
-   
+
+# emotions = [0, 0, 0, 0]
+# for label in test_data.labels:
+#     for i, emotion in enumerate(label):
+#         if emotion[1] == 1:
+#             emotions[i] += 1
+# print(emotions)
+
 train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
 valid_loader = DataLoader(valid_data, batch_size=args.batch_size, shuffle=True)
 test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=True)
@@ -145,14 +151,13 @@ hyp_params.batch_chunk = args.batch_chunk
 hyp_params.n_train, hyp_params.n_valid, hyp_params.n_test = len(train_data), len(valid_data), len(test_data)
 hyp_params.model = str.upper(args.model.strip())
 hyp_params.output_dim = output_dim_dict.get(dataset, 1)
-hyp_params.train_student_only = True
-hyp_params.train_audio_teacher = False
-hyp_params.train_language_teacher = False
-hyp_params.classifier = "Transformer"
-hyp_params.criterion = criterion_dict.get(dataset+f"_{hyp_params.classifier}", 'L1Loss')
+hyp_params.train_student_only = False
+hyp_params.train_audio_teacher = True
+hyp_params.train_language_teacher = True
+hyp_params.classifier = "MLP"
+hyp_params.criterion = criterion_dict.get(dataset + f"_{hyp_params.classifier}", 'L1Loss')
 hyp_params.num_emotions = 4
 hyp_params.attn_mask = False
 
 if __name__ == '__main__':
     test_loss = train.initiate(hyp_params, train_loader, valid_loader, test_loader)
-

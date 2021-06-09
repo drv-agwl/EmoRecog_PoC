@@ -137,22 +137,18 @@ class TransformerDecoder(nn.Module):
         if self.normalize:
             self.layer_norm = LayerNorm(embed_dim)
 
-    def forward(self, tgt, memory):
-        tgt = tgt.unsqueeze(1).repeat(1, memory.shape[1], 1)
+    def forward(self, query, memory, query_embed):
+        query = query.unsqueeze(1).repeat(1, memory.shape[1], 1)
+        query_embed = query_embed.unsqueeze(1).repeat(1, memory.shape[1], 1)
 
-        x_in = tgt
+        x = query
         x_k = memory
         x_v = memory
-
-        # rescale
-        x = self.embed_scale * x_in
-        x_k = self.embed_scale * x_k
-        x_v = self.embed_scale * x_v
 
         # encoder layers
         intermediates = [x]
         for layer in self.layers:
-            x = layer(x, x_k, x_v)
+            x = layer(x, x_k, x_v, query_embed=query_embed)
             intermediates.append(x)
 
         if self.normalize:
@@ -263,6 +259,7 @@ class TransformerDecoderLayer(nn.Module):
         self.num_heads = num_heads
 
         self.embed_positions = SinusoidalPositionalEmbedding(embed_dim)
+        self.embed_scale = math.sqrt(embed_dim)
 
         self.self_attn = MultiheadAttention(
             embed_dim=self.embed_dim,
@@ -279,11 +276,16 @@ class TransformerDecoderLayer(nn.Module):
         self.fc2 = Linear(4 * self.embed_dim, self.embed_dim)
         self.layer_norms = nn.ModuleList([LayerNorm(self.embed_dim) for _ in range(2)])
 
-    def embed_pos(self, x):
-        ret = x + self.embed_positions(x.transpose(0, 1)[:, :, 0]).transpose(0, 1)  # Add positional embedding
-        return ret
+    def embed_pos(self, x, pos_embed=None):
+        ret = x
+        ret = self.embed_scale * ret
 
-    def forward(self, tgt, x_k, x_v):
+        if pos_embed is not None:
+            return ret + pos_embed  # Add positional embedding
+
+        return ret + self.embed_positions(x_in.transpose(0, 1)[:, :, 0]).transpose(0, 1)
+
+    def forward(self, tgt, x_k, x_v, query_embed):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -295,7 +297,7 @@ class TransformerDecoderLayer(nn.Module):
             encoded output of shape `(batch, src_len, embed_dim)`
         """
 
-        q = k = self.embed_pos(tgt)
+        q = k = embed_pos(tgt, query_embed)
         v = tgt
 
         # self-attention in emotion query
@@ -304,8 +306,8 @@ class TransformerDecoderLayer(nn.Module):
         tgt = self.maybe_layer_norm(0, tgt, after=True)
 
         # Cross-attention
-        q = self.embed_pos(tgt)
-        k = self.embed_pos(x_k)
+        q = embed_pos(tgt)
+        k = embed_pos(x_k)
         v = x_v
         tgt2, _ = self.self_attn(query=q, key=k, value=v, attn_mask=None)
         tgt = tgt + F.dropout(tgt2, p=self.res_dropout, training=self.training)

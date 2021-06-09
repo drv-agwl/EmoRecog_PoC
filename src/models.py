@@ -12,7 +12,7 @@ class MULTModel(nn.Module):
         """
         super(MULTModel, self).__init__()
         self.orig_d_l, self.orig_d_a, self.orig_d_v = hyp_params.orig_d_l, hyp_params.orig_d_a, hyp_params.orig_d_v
-        self.d_l, self.d_a, self.d_v = 30, 30, 30
+        self.d_l, self.d_a, self.d_v = 40, 40, 40
         self.vonly = hyp_params.vonly
         self.aonly = hyp_params.aonly
         self.lonly = hyp_params.lonly
@@ -49,9 +49,9 @@ class MULTModel(nn.Module):
             output_dim = 1  # This is actually not a hyperparameter :-)
 
         # 1. Temporal convolutional layers
-        self.proj_l = nn.Conv1d(self.orig_d_l, self.d_l, kernel_size=1, padding=0, bias=False)
-        self.proj_a = nn.Conv1d(self.orig_d_a, self.d_a, kernel_size=1, padding=0, bias=False)
-        self.proj_v = nn.Conv1d(self.orig_d_v, self.d_v, kernel_size=1, padding=0, bias=False)
+        self.proj_l = nn.Conv1d(self.orig_d_l, self.d_l, kernel_size=3, padding=0, bias=False)
+        self.proj_a = nn.Conv1d(self.orig_d_a, self.d_a, kernel_size=5, padding=0, bias=False)
+        self.proj_v = nn.Conv1d(self.orig_d_v, self.d_v, kernel_size=3, padding=0, bias=False)
 
         # 2. Self-attention for video (Student)
         self.trans_self_v = self.get_network(self_type="v", layers=3)
@@ -80,6 +80,7 @@ class MULTModel(nn.Module):
         # self.trans_v_mem = self.get_network(self_type='v_mem', layers=3)
 
         # Projection layers
+        self.proj0 = nn.Linear(2*self.d_v, self.d_v)
         self.proj1 = nn.Linear(self.d_v, self.d_v)
         self.proj2 = nn.Linear(self.d_v, self.d_v)
         self.out_layer = nn.Linear(self.d_v, output_dim)
@@ -148,14 +149,14 @@ class MULTModel(nn.Module):
             if type(h_v_with_a) == tuple:
                 h_v_with_a = h_v_with_a[0]
             h = h_v_with_a
-            h_last = h_v_with_a[-1]
+            h_last = h_v_with_a = h_v_with_a[-1]
 
-        elif self.train_language_teacher:
+        if self.train_language_teacher:
             h_v_with_l = self.trans_cross_vl(proj_x_l, proj_x_v, proj_x_v)
             if type(h_v_with_l) == tuple:
                 h_v_with_l = h_v_with_l[0]
             h = h_v_with_l
-            h_last = h_v_with_l[-1]
+            h_last = h_v_with_l = h_v_with_l[-1]
 
         # if self.lonly:
         #     # (V,A) --> L
@@ -191,11 +192,17 @@ class MULTModel(nn.Module):
         #     last_hs = torch.cat([last_h_l, last_h_a, last_h_v], dim=1)
 
         # A residual block
+
+        if self.train_audio_teacher and self.train_language_teacher:
+            h_last = torch.cat([h_v_with_a, h_v_with_l], dim=1)
+            h_last = F.dropout(F.relu(self.proj0(h_last)), p=self.out_dropout, training=self.training)
+
         last_hs_proj = self.proj2(F.dropout(F.relu(self.proj1(h_last)), p=self.out_dropout, training=self.training))
         last_hs_proj += h_last
 
         if self.classifier == "Transformer":
-            emotion_h = self.decoder(self.emotion_queries.weight, h)
+            tgt = torch.zeros_like(self.emotion_queries)
+            emotion_h = self.decoder(tgt=tgt, memory=h, query_embed=self.emotion_queries.weight)
             emotion_h = self.out_layer(emotion_h).permute(1, 0, 2).squeeze(-1)
             emotion_prob = self.prob(emotion_h)
             return emotion_prob, h
